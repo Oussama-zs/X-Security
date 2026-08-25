@@ -1,0 +1,10 @@
+rules:
+  - id: hardcoded-dummy-secret
+    patterns:
+      - pattern-either:
+          - pattern: const SECRET = "..."
+          - pattern: const $X = "password123"
+    message: "Hardcoded dummy secret found for testing purposes"
+    languages:
+      - javascript
+    severity: WARNING

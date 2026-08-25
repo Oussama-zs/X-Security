@@ -1,0 +1,30 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Packages
+*.egg-info/
+build/
+dist/
+
+# Logs and Reports (Do not track generated files)
+wapiti_output.json
+nuclei_output.json
+vulnerability_report.pdf
+*.log
+
+# Academic & Personal Files (Not for Open-Source Repo)
+assets/
+*.tex
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
