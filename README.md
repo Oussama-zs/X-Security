@@ -45,8 +45,8 @@ xsecurity -H --target_dir ./mon_code --target-url "http://127.0.0.1:8080" --dast
 *   **Mode SAST Uniquement :** `xsecurity -S --target_dir ./mon_code ...`
 *   **Mode DAST Uniquement :** `xsecurity -D --target-url "http://monsite.com" ...`
 
-## 🧪 Fichiers de Démonstration (TP)
-Le dossier inclut une application Flask intentionnellement vulnérable (`dummy_vulnerable_app`) contenant 6 failles critiques (SQLi, XSS, Command Injection, LFI, SSRF, Pickle Deserialization) pour tester la robustesse de l'IA.
+## 🧪 Environnement de Test
+Le dépôt inclut une application Flask intentionnellement vulnérable (`dummy_vulnerable_app`) contenant 6 failles critiques (SQLi, XSS, Command Injection, LFI, SSRF, Pickle Deserialization) permettant de valider l'architecture et la précision de l'IA.
 
 ## 👨‍💻 Auteur
 **Oussama Elattaoui** - Élève Ingénieur en Cybersécurité @ ESI Rabat.
