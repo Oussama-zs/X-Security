@@ -185,43 +185,56 @@ Provide your final assessment. Your output MUST be pure JSON matching this exact
             severity = candidate.severity
             analysis_type = "DAST"
         
-        raw_content = self._call_llm_api(prompt)
-        
-        # Robust JSON extraction: Find the first { and the last }
-        match = re.search(r'\{.*\}', raw_content, re.DOTALL)
-        if match:
-            clean_json_str = match.group(0)
-        else:
-            print(f"    -> [WARNING] AI did not return a valid JSON block. Raw response: {raw_content[:150]}...")
-            clean_json_str = "{}" # Fallback
-            
         try:
-            data = json.loads(clean_json_str)
-        except json.JSONDecodeError as e:
-            print(f"    -> [ERROR] JSON parsing failed: {e}. Raw response: {raw_content[:150]}...")
-            data = {}
-        
-        # Safely parse string booleans like "false" to boolean False
-        is_fp_raw = data.get("is_false_positive", True)
-        if isinstance(is_fp_raw, str):
-            is_fp = is_fp_raw.lower() == "true"
-        else:
-            is_fp = bool(is_fp_raw)
+            raw_content = self._call_llm_api(prompt)
             
-        return VerifiedFinding(
-            rule_id=rule_id,
-            vulnerability_name=data.get("vulnerability_name", ""),
-            severity=severity,
-            cwe=data.get("cwe", ""),
-            description=data.get("description", ""),
-            suggested_correction=data.get("suggested_correction", ""),
-            file_path=file_path,
-            line_number=line_number,
-            analysis_type=analysis_type,
-            confidence=data.get("confidence", "Low"),
-            is_false_positive=is_fp,
-            ai_rationale=data.get("ai_rationale", "")
-        )
+            # Robust JSON extraction: Find the first { and the last }
+            match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+            if match:
+                clean_json_str = match.group(0)
+            else:
+                print(f"    -> [WARNING] AI did not return a valid JSON block. Raw response: {raw_content[:150]}...")
+                clean_json_str = "{}" # Fallback
+                
+            data = json.loads(clean_json_str)
+            
+            # Safely parse string booleans like "false" to boolean False
+            is_fp_raw = data.get("is_false_positive", True)
+            if isinstance(is_fp_raw, str):
+                is_fp = is_fp_raw.lower() == "true"
+            else:
+                is_fp = bool(is_fp_raw)
+                
+            return VerifiedFinding(
+                rule_id=rule_id,
+                vulnerability_name=data.get("vulnerability_name", ""),
+                severity=severity,
+                cwe=data.get("cwe", ""),
+                description=data.get("description", ""),
+                suggested_correction=data.get("suggested_correction", ""),
+                file_path=file_path,
+                line_number=line_number,
+                analysis_type=analysis_type,
+                confidence=data.get("confidence", "Low"),
+                is_false_positive=is_fp,
+                ai_rationale=data.get("ai_rationale", "")
+            )
+        except Exception as e:
+            print(f"    -> [CRITICAL ERROR] AI Parsing or API failed: {e}")
+            return VerifiedFinding(
+                rule_id=rule_id,
+                vulnerability_name=f"Unverified {identifier} (AI Error)",
+                severity=severity,
+                cwe="Unknown",
+                description="The AI supervisor failed to analyze this finding due to an API or parsing error.",
+                suggested_correction="Manual verification required.",
+                file_path=file_path,
+                line_number=line_number,
+                analysis_type=analysis_type,
+                confidence="Low",
+                is_false_positive=False, # Keep it so it's not lost
+                ai_rationale=f"AI Error: {e}"
+            )
 
     def evaluate_all(self, candidates: List[Union[CandidateFinding, DASTCandidateFinding]]) -> List[VerifiedFinding]:
         """Evaluates a list of candidates and returns only the True Positives."""

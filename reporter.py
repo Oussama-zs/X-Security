@@ -105,9 +105,52 @@ def generate_report(findings: List[VerifiedFinding], output_path: str = "report.
         
     try:
         pdf.output(output_path)
-        print(f"Report saved to {output_path}")
+        print(f"PDF report saved to {output_path}")
     except Exception as e:
-        print(f"Error saving PDF report: {e}")
+        print(f"Error saving PDF report (possibly due to unsupported UTF-8 characters like emojis): {e}")
+
+def generate_markdown_report(findings: List[VerifiedFinding], output_path: str = "vulnerability_report.md"):
+    print(f"Generating Markdown report with {len(findings)} verified findings...")
+    
+    lines = []
+    lines.append("# 🛡️ AI Analysis Agent - Vulnerability Report")
+    lines.append(f"**Date generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"**Total verified findings:** {len(findings)}")
+    lines.append("---")
+    
+    if not findings:
+        lines.append("*No confirmed vulnerabilities found.*")
+    else:
+        for i, finding in enumerate(findings, 1):
+            severity_icon = "🔴" if str(finding.severity).upper() in ["HIGH", "CRITICAL"] else "🟠"
+            lines.append(f"## {i}. {severity_icon} [{finding.analysis_type}] {finding.vulnerability_name or finding.rule_id} ({finding.severity})")
+            
+            target_str = f"`{finding.file_path}:{finding.line_number}`" if getattr(finding, "analysis_type", "SAST") == "SAST" else f"`{finding.file_path}`"
+            
+            lines.append(f"- **Target:** {target_str}")
+            if finding.cwe:
+                lines.append(f"- **CWE:** {finding.cwe}")
+            lines.append(f"- **Confidence:** {finding.confidence}")
+            lines.append("")
+            
+            lines.append("### Description")
+            lines.append(finding.description or "No description provided.")
+            lines.append("")
+            
+            lines.append("### AI Rationale")
+            lines.append(f"> {finding.ai_rationale}")
+            lines.append("")
+            
+            lines.append("### Suggested Correction")
+            lines.append(finding.suggested_correction or "No suggestion provided.")
+            lines.append("---")
+            
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        print(f"Markdown report saved to {output_path}")
+    except Exception as e:
+        print(f"Error saving Markdown report: {e}")
 
 if __name__ == "__main__":
     # Test script

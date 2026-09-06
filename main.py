@@ -11,14 +11,15 @@
 # ==============================================================================
 
 import os
+import json
 import argparse
 from pathlib import Path
 
 from ingestion import IngestionEngine
-from static_analyzer import StaticAnalyzer
-from dynamic_analyzer import DynamicOrchestrator
+from static_analyzer import StaticAnalyzer, CandidateFinding
+from dynamic_analyzer import DynamicOrchestrator, DASTCandidateFinding
 from ai_supervisor import AISupervisor
-from reporter import generate_report
+from reporter import generate_report, generate_markdown_report
 
 def main():
     parser = argparse.ArgumentParser(description="AI Analysis Agent for Hybrid Vulnerability Scanning (SAST + DAST)")
@@ -27,6 +28,9 @@ def main():
     parser.add_argument("--dast-engines", default="wapiti", help="Comma-separated list of DAST engines to run (e.g., wapiti,nuclei,zap)")
     parser.add_argument("--output", default="vulnerability_report.pdf", help="Output PDF report path")
     parser.add_argument("--api-url", required=True, help="HTTPS endpoint of the LLM API (e.g., https://openrouter.ai/api/v1/chat/completions)")
+    parser.add_argument("--zap-url", default="http://127.0.0.1:8081", help="URL of the OWASP ZAP Daemon (default: http://127.0.0.1:8081)")
+    parser.add_argument("--zap-api-key", default="", help="API Key for the OWASP ZAP Daemon")
+    parser.add_argument("--resume", default=None, help="Path to xsecurity_raw_findings.json to resume from (skips SAST/DAST)")
     
     # Optional explicitly forced modes
     parser.add_argument("-S", "--sast", action="store_true", help="Force SAST mode only")
@@ -37,8 +41,8 @@ def main():
     parser.add_argument("--api-key", required=True, help="API Key for the provider (use 'none' for local models with no auth)")
     args = parser.parse_args()
 
-    if not args.target_dir and not args.target_url:
-        print("Error: You must provide either a target directory (SAST) or a --target-url (DAST), or both.")
+    if not args.target_dir and not args.target_url and not args.resume:
+        print("Error: You must provide either a target directory (SAST), a --target-url (DAST), or --resume.")
         return
 
     print("==================================================")
@@ -47,8 +51,28 @@ def main():
 
     all_candidates = []
 
-    # Determine mode
-    run_sast = False
+    if args.resume:
+        print(f"\n[Phase 1 & 2] Bypassed! Resuming from: {args.resume}")
+        try:
+            with open(args.resume, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+            
+            # Reconstruct objects
+            for item in raw_data:
+                if "rule_id" in item:
+                    # It's a CandidateFinding (SAST)
+                    all_candidates.append(CandidateFinding(**item))
+                elif "vulnerability_type" in item:
+                    # It's a DASTCandidateFinding (DAST)
+                    all_candidates.append(DASTCandidateFinding(**item))
+                    
+            print(f"Loaded {len(all_candidates)} candidates successfully.")
+        except Exception as e:
+            print(f"Error loading resume file: {e}")
+            return
+    else:
+        # Determine mode
+        run_sast = False
     run_dast = False
     
     if args.hybrid:
@@ -92,27 +116,55 @@ def main():
             sast_candidates = analyzer.scan(rules_path="auto")
             all_candidates.extend(sast_candidates)
 
-    if run_dast:
-        print(f"\n[Phase 2.5] Dynamic Analysis (DAST) on {args.target_url}...")
-        engines_list = [e.strip() for e in args.dast_engines.split(",")]
-        orchestrator = DynamicOrchestrator(engines=engines_list)
-        dast_candidates = orchestrator.scan_all(args.target_url)
-        all_candidates.extend(dast_candidates)
+        if run_dast:
+            print(f"\n[Phase 2.5] Dynamic Analysis (DAST) on {args.target_url}...")
+            engines_list = [e.strip() for e in args.dast_engines.split(",")]
+            orchestrator = DynamicOrchestrator(engines=engines_list, zap_url=args.zap_url, zap_api_key=args.zap_api_key)
+            dast_candidates = orchestrator.scan_all(args.target_url)
+            all_candidates.extend(dast_candidates)
 
-    if not all_candidates:
-        print("\nNo candidate vulnerabilities found during scans.")
-        print("Generating empty report...")
-        generate_report([], args.output)
-        return
+        if not all_candidates:
+            print("\nNo candidate vulnerabilities found during scans.")
+            print("Generating empty report...")
+            generate_report([], args.output)
+            return
+
+        # Intermediate Save: Raw Findings
+        print("\n[Checkpoint] Saving raw candidate findings to 'xsecurity_raw_findings.json'...")
+        try:
+            with open("xsecurity_raw_findings.json", "w", encoding="utf-8") as f:
+                json.dumps_obj = [getattr(c, '__dict__', str(c)) for c in all_candidates]
+                json.dump(json.dumps_obj, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: Failed to save raw findings: {e}")
 
     # Phase 3: Semantic Analysis (AI Supervisor)
     print(f"\n[Phase 3] Semantic Analysis (AI Critique) using {args.model} via {args.api_url}...")
     supervisor = AISupervisor(api_url=args.api_url, model_name=args.model, api_key=args.api_key)
     verified_findings = supervisor.evaluate_all(all_candidates)
 
+    # Intermediate Save: Verified Findings
+    print("\n[Checkpoint] Saving AI-verified findings to 'xsecurity_verified_findings.json'...")
+    try:
+        with open("xsecurity_verified_findings.json", "w", encoding="utf-8") as f:
+            json.dumps_obj = [getattr(v, '__dict__', str(v)) for v in verified_findings]
+            json.dump(json.dumps_obj, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"Warning: Failed to save verified findings: {e}")
+
     # Phase 4: Reporter
-    print("\n[Phase 4] Generating Report...")
-    generate_report(verified_findings, args.output)
+    print("\n[Phase 4] Generating Reports...")
+    md_output = args.output.replace(".pdf", ".md")
+    
+    # 1. Sophisticated Markdown Report (Handles all UTF-8 safely)
+    generate_markdown_report(verified_findings, md_output)
+    
+    # 2. PDF Report (Fallback, might crash on extreme payloads)
+    try:
+        generate_report(verified_findings, args.output)
+    except Exception as e:
+        print(f"\n[CRITICAL ERROR] PDF generation failed: {e}")
+        print(f"-> Do not worry, your sophisticated technical report is safely saved in '{md_output}'.")
     
     print("\n==================================================")
     print(f"Scan complete. Found {len(verified_findings)} verified vulnerabilities.")

@@ -216,9 +216,11 @@ class ZAPEngine(DASTEngine):
         return findings
 
 class DynamicOrchestrator:
-    def __init__(self, engines: List[str]):
+    def __init__(self, engines: List[str], zap_url: str = "http://127.0.0.1:8081", zap_api_key: str = ""):
         """
         engines: list of engine names e.g. ["wapiti", "nuclei", "zap"]
+        zap_url: URL of the ZAP proxy/daemon
+        zap_api_key: API key for the ZAP daemon
         """
         self.engines = []
         for eng in engines:
@@ -228,7 +230,7 @@ class DynamicOrchestrator:
             elif e == "nuclei":
                 self.engines.append(NucleiEngine())
             elif e == "zap":
-                self.engines.append(ZAPEngine())
+                self.engines.append(ZAPEngine(proxy_url=zap_url, api_key=zap_api_key))
             else:
                 print(f"Warning: Unknown DAST engine '{eng}'")
                 
