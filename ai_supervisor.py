@@ -223,7 +223,7 @@ Provide your final assessment. Your output MUST be pure JSON matching this exact
             print(f"    -> [CRITICAL ERROR] AI Parsing or API failed: {e}")
             return VerifiedFinding(
                 rule_id=rule_id,
-                vulnerability_name=f"Unverified {identifier} (AI Error)",
+                vulnerability_name=f"Unverified {rule_id} (AI Error)",
                 severity=severity,
                 cwe="Unknown",
                 description="The AI supervisor failed to analyze this finding due to an API or parsing error.",
