@@ -73,48 +73,48 @@ def main():
     else:
         # Determine mode
         run_sast = False
-    run_dast = False
-    
-    if args.hybrid:
-        run_sast = True
-        run_dast = True
-    elif args.sast:
-        run_sast = True
-    elif args.dast:
-        run_dast = True
-    else:
-        # Auto-mode
-        if args.target_dir:
-            run_sast = True
-        if args.target_url:
-            run_dast = True
-            
-    if run_sast and not args.target_dir:
-        print("Error: SAST or Hybrid mode requires a target_dir.")
-        return
+        run_dast = False
         
-    if run_dast and not args.target_url:
-        print("Error: DAST or Hybrid mode requires a --target-url.")
-        return
-
-    if run_sast:
-        target_path = Path(args.target_dir).absolute()
-        if not target_path.exists() or not target_path.is_dir():
-            print(f"Error: Target directory '{target_path}' does not exist.")
+        if args.hybrid:
+            run_sast = True
+            run_dast = True
+        elif args.sast:
+            run_sast = True
+        elif args.dast:
+            run_dast = True
+        else:
+            # Auto-mode
+            if args.target_dir:
+                run_sast = True
+            if args.target_url:
+                run_dast = True
+                
+        if run_sast and not args.target_dir:
+            print("Error: SAST or Hybrid mode requires a target_dir.")
             return
             
-        # Phase 1: Recon & Filtering
-        print("\n[Phase 1] Ingestion and Reconnaissance (SAST)...")
-        ingestion_engine = IngestionEngine(target_path)
-        manifest = ingestion_engine.scan()
-        if not manifest:
-            print("No source files found to scan. Skipping SAST.")
-        else:
-            # Phase 2: Static Analysis (Parser & Orchestrator)
-            print("\n[Phase 2] Static Analysis (Semgrep)...")
-            analyzer = StaticAnalyzer(target_path)
-            sast_candidates = analyzer.scan(rules_path="auto")
-            all_candidates.extend(sast_candidates)
+        if run_dast and not args.target_url:
+            print("Error: DAST or Hybrid mode requires a --target-url.")
+            return
+
+        if run_sast:
+            target_path = Path(args.target_dir).absolute()
+            if not target_path.exists() or not target_path.is_dir():
+                print(f"Error: Target directory '{target_path}' does not exist.")
+                return
+                
+            # Phase 1: Recon & Filtering
+            print("\n[Phase 1] Ingestion and Reconnaissance (SAST)...")
+            ingestion_engine = IngestionEngine(target_path)
+            manifest = ingestion_engine.scan()
+            if not manifest:
+                print("No source files found to scan. Skipping SAST.")
+            else:
+                # Phase 2: Static Analysis (Parser & Orchestrator)
+                print("\n[Phase 2] Static Analysis (Semgrep)...")
+                analyzer = StaticAnalyzer(target_path)
+                sast_candidates = analyzer.scan(rules_path="auto")
+                all_candidates.extend(sast_candidates)
 
         if run_dast:
             print(f"\n[Phase 2.5] Dynamic Analysis (DAST) on {args.target_url}...")
@@ -137,6 +137,16 @@ def main():
                 json.dump(json.dumps_obj, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"Warning: Failed to save raw findings: {e}")
+
+    # Deduplicate candidates if any overlap occurred
+    seen = set()
+    deduped_candidates = []
+    for c in all_candidates:
+        key = (getattr(c, 'rule_id', None), getattr(c, 'file_path', None), getattr(c, 'start_line', None), getattr(c, 'vulnerability_type', None), getattr(c, 'target_url', None))
+        if key not in seen:
+            seen.add(key)
+            deduped_candidates.append(c)
+    all_candidates = deduped_candidates
 
     # Phase 3: Semantic Analysis (AI Supervisor)
     print(f"\n[Phase 3] Semantic Analysis (AI Critique) using {args.model} via {args.api_url}...")

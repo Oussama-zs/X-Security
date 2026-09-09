@@ -12,6 +12,7 @@
 
 import json
 import re
+import time
 import requests
 from dataclasses import dataclass
 from typing import List, Union
@@ -145,10 +146,26 @@ Provide your final assessment. Your output MUST be pure JSON matching this exact
                 "response_format": {"type": "json_object"}
             }
             
-        response = requests.post(self.api_url, headers=headers, json=payload, timeout=60)
-        
-        if response.status_code != 200:
-            raise RuntimeError(f"API Error ({response.status_code}): {response.text}")
+        response = None
+        for attempt in range(3):
+            try:
+                response = requests.post(self.api_url, headers=headers, json=payload, timeout=60)
+                if response.status_code == 200:
+                    break
+                elif response.status_code == 429:
+                    print(f"    -> [AI Rate Limit] Waiting 10s before retry (attempt {attempt+1}/3)...")
+                    time.sleep(10)
+                else:
+                    raise RuntimeError(f"API Error ({response.status_code}): {response.text}")
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                if attempt < 2:
+                    print(f"    -> [Network Glitch] Connection issue ({e}). Retrying in 5s (attempt {attempt+1}/3)...")
+                    time.sleep(5)
+                else:
+                    raise e
+                    
+        if response is None or response.status_code != 200:
+            raise RuntimeError(f"API Error: Failed after 3 attempts")
             
         result = response.json()
         
