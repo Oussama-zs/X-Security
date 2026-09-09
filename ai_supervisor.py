@@ -168,6 +168,73 @@ Provide your final assessment. Your output MUST be pure JSON matching this exact
             
         return content.strip()
 
+    def _extract_json(self, raw_content: str) -> dict:
+        """Extracts and parses the JSON verdict from the LLM output with high resilience."""
+        content = raw_content.strip()
+        
+        # 1. Direct parsing if the entire response is clean JSON
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+        # 2. Markdown fenced code blocks: ```json ... ``` or ``` ... ```
+        code_blocks = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+        for block in code_blocks:
+            clean_block = block.strip()
+            try:
+                data = json.loads(clean_block)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+
+        # 3. Locate the JSON object containing the expected key "is_false_positive"
+        pos = content.find('"is_false_positive"')
+        if pos != -1:
+            start_idx = content.rfind('{', 0, pos)
+            if start_idx != -1:
+                depth = 0
+                in_string = False
+                escape = False
+                for idx in range(start_idx, len(content)):
+                    char = content[idx]
+                    if escape:
+                        escape = False
+                        continue
+                    if char == '\\':
+                        escape = True
+                        continue
+                    if char == '"':
+                        in_string = not in_string
+                        continue
+                    if not in_string:
+                        if char == '{':
+                            depth += 1
+                        elif char == '}':
+                            depth -= 1
+                            if depth == 0:
+                                candidate_str = content[start_idx:idx+1]
+                                try:
+                                    data = json.loads(candidate_str)
+                                    if isinstance(data, dict):
+                                        return data
+                                except Exception:
+                                    break
+
+        # 4. Fallback: Search for any { ... } block containing "is_false_positive"
+        for match in re.finditer(r'\{[^{}]*"is_false_positive"[\s\S]*?\}', content):
+            try:
+                data = json.loads(match.group(0))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                continue
+
+        raise ValueError(f"No valid JSON structure found in AI response: {content[:120]}...")
+
     def evaluate_candidate(self, candidate: Union[CandidateFinding, DASTCandidateFinding]) -> VerifiedFinding:
         """Sends the candidate to the generic LLM API and parses the structured response."""
         if isinstance(candidate, CandidateFinding):
@@ -187,16 +254,7 @@ Provide your final assessment. Your output MUST be pure JSON matching this exact
         
         try:
             raw_content = self._call_llm_api(prompt)
-            
-            # Robust JSON extraction: Find the first { and the last }
-            match = re.search(r'\{.*\}', raw_content, re.DOTALL)
-            if match:
-                clean_json_str = match.group(0)
-            else:
-                print(f"    -> [WARNING] AI did not return a valid JSON block. Raw response: {raw_content[:150]}...")
-                clean_json_str = "{}" # Fallback
-                
-            data = json.loads(clean_json_str)
+            data = self._extract_json(raw_content)
             
             # Safely parse string booleans like "false" to boolean False
             is_fp_raw = data.get("is_false_positive", True)

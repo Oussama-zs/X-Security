@@ -55,6 +55,12 @@ class StaticAnalyzer:
             "semgrep", 
             "scan", 
             f"--config={rules_path}", 
+            "--jobs", "4",
+            "--exclude", "target",
+            "--exclude", ".gradle",
+            "--exclude", "node_modules",
+            "--exclude", "*.min.js",
+            "--exclude", "*.bundle.js",
             "--json", 
             target_path
         ]
