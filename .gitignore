@@ -18,6 +18,10 @@ dist/
 wapiti_output.json
 nuclei_output.json
 vulnerability_report.pdf
+webgoat.pdf
+webgoat.md
+*.md.tmp
+xsecurity_*.json
 *.log
 
 # Academic & Personal Files (Not for Open-Source Repo)

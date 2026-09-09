@@ -32,6 +32,29 @@ class PDFReporter(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
+def sanitize_text(text: str) -> str:
+    """Sanitizes unicode text for FPDF latin-1 encoding, mapping typographics and stripping unprintable chars."""
+    if not text:
+        return ""
+    replacements = {
+        '\u2014': '--',   # em dash —
+        '\u2013': '-',    # en dash –
+        '\u2018': "'",    # left single quote ‘
+        '\u2019': "'",    # right single quote ’
+        '\u201c': '"',    # left double quote “
+        '\u201d': '"',    # right double quote ”
+        '\u2022': '*',    # bullet •
+        '\u2026': '...',  # ellipsis …
+        '\u00a0': ' ',    # non-breaking space
+        '\u2192': '->',   # right arrow →
+        '\u2714': '[+]',  # check mark ✔
+        '\u2718': '[-]',  # cross mark ✘
+    }
+    for search, replace in replacements.items():
+        text = text.replace(search, replace)
+        
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def generate_report(findings: List[VerifiedFinding], output_path: str = "report.pdf"):
     print(f"Generating PDF report with {len(findings)} verified findings...")
     
@@ -53,7 +76,7 @@ def generate_report(findings: List[VerifiedFinding], output_path: str = "report.
         pdf.set_font("Arial", 'B', 14)
         pdf.set_text_color(200, 0, 0) if str(finding.severity).upper() in ["HIGH", "CRITICAL"] else pdf.set_text_color(200, 100, 0)
         title = f"{i}. [{finding.analysis_type}] {finding.vulnerability_name or finding.rule_id} ({finding.severity})"
-        pdf.cell(0, 10, title, ln=True)
+        pdf.cell(0, 10, sanitize_text(title), ln=True)
         pdf.set_text_color(0, 0, 0)
         
         # Details
@@ -66,18 +89,18 @@ def generate_report(findings: List[VerifiedFinding], output_path: str = "report.
         else:
             target_str = finding.file_path
             
-        pdf.cell(0, 8, target_str, ln=True)
+        pdf.cell(0, 8, sanitize_text(target_str), ln=True)
         
         if finding.cwe:
             pdf.set_font("Arial", 'B', 11)
             pdf.cell(30, 8, "CWE:", border=0)
             pdf.set_font("Arial", '', 11)
-            pdf.cell(0, 8, finding.cwe, ln=True)
+            pdf.cell(0, 8, sanitize_text(finding.cwe), ln=True)
             
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(30, 8, "Confidence:", border=0)
         pdf.set_font("Arial", '', 11)
-        pdf.cell(0, 8, finding.confidence, ln=True)
+        pdf.cell(0, 8, sanitize_text(finding.confidence), ln=True)
         
         pdf.ln(2)
         
@@ -85,21 +108,21 @@ def generate_report(findings: List[VerifiedFinding], output_path: str = "report.
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 8, "Description:", ln=True)
         pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 6, finding.description or "No description provided.")
+        pdf.multi_cell(0, 6, sanitize_text(finding.description or "No description provided."))
         pdf.ln(2)
         
         # AI Rationale
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 8, "AI Rationale:", ln=True)
         pdf.set_font("Arial", 'I', 11)
-        pdf.multi_cell(0, 6, finding.ai_rationale)
+        pdf.multi_cell(0, 6, sanitize_text(finding.ai_rationale))
         pdf.ln(2)
         
         # Suggestion
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(0, 8, "Suggested Correction:", ln=True)
         pdf.set_font("Arial", '', 11)
-        pdf.multi_cell(0, 6, finding.suggested_correction or "No suggestion provided.")
+        pdf.multi_cell(0, 6, sanitize_text(finding.suggested_correction or "No suggestion provided."))
         
         pdf.ln(10)
         
