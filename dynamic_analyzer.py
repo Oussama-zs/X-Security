@@ -14,10 +14,33 @@ import json
 import subprocess
 import os
 import time
+import logging
 import requests
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
+
+# Dedicated DAST logger configured to write detailed logs to dast_scan.log
+dast_logger = logging.getLogger("xsecurity.dast")
+dast_logger.setLevel(logging.DEBUG)
+
+# File handler for dast_scan.log
+if not dast_logger.handlers:
+    fh = logging.FileHandler("dast_scan.log", mode="w", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    fh.setFormatter(formatter)
+    dast_logger.addHandler(fh)
+
+def log_msg(msg: str, level: str = "info"):
+    """Prints message to stdout and logs to dast_scan.log."""
+    print(msg)
+    if level == "error":
+        dast_logger.error(msg)
+    elif level == "warning":
+        dast_logger.warning(msg)
+    else:
+        dast_logger.info(msg)
 
 @dataclass
 class DASTCandidateFinding:
@@ -39,27 +62,39 @@ class WapitiEngine(DASTEngine):
         output_file = "wapiti_output.json"
         
         if os.path.exists(output_file):
-            os.remove(output_file)
+            try:
+                os.remove(output_file)
+            except Exception:
+                pass
             
-        print(f"[Wapiti] Starting scan on {target_url}...")
+        log_msg(f"[Wapiti] Starting scan on {target_url}...")
         
         cmd = [
             "wapiti",
             "-u", target_url,
             "-f", "json",
             "-o", output_file,
-            "-m", "sql,xss,file,crlf,exec,ssrf", # Added exec and ssrf to match our dummy app
-            "--max-scan-time", "120" 
+            "-m", "sql,xss,file,crlf,exec,ssrf",
+            "--max-scan-time", "120"
         ]
+        
+        dast_logger.info(f"[Wapiti] Command: {' '.join(cmd)}")
         
         try:
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
             
-            subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
+            dast_logger.info(f"[Wapiti] Return code: {proc.returncode}")
+            if proc.stdout:
+                dast_logger.debug(f"[Wapiti STDOUT]:\n{proc.stdout}")
+            if proc.stderr:
+                dast_logger.info(f"[Wapiti STDERR]:\n{proc.stderr}")
             
             if not os.path.exists(output_file):
-                print("[Wapiti] Error: No output file generated. Scan may have failed.")
+                log_msg(f"[Wapiti] Notice: No output JSON generated (Code {proc.returncode}). Check 'dast_scan.log' for details.", level="warning")
+                if proc.stderr:
+                    dast_logger.error(f"[Wapiti Stderr Details]: {proc.stderr}")
                 return findings
                 
             with open(output_file, 'r', encoding='utf-8') as f:
@@ -85,14 +120,16 @@ class WapitiEngine(DASTEngine):
                         target_url=vuln.get("path", target_url),
                         payload=payload,
                         http_request=http_req,
-                        http_response_snippet="Response snippet not fully captured by Wapiti by default. AI must infer from payload reflection."
+                        http_response_snippet="Response snippet inferred by Wapiti reflection."
                     )
                     findings.append(finding)
                     
+            dast_logger.info(f"[Wapiti] Successfully parsed {len(findings)} findings.")
+                    
         except FileNotFoundError:
-            print("[Wapiti] Error: wapiti command not found. Is it installed in PATH?")
+            log_msg("[Wapiti] Error: 'wapiti' command not found. Is it installed in PATH?", level="error")
         except Exception as e:
-            print(f"[Wapiti] Error parsing results: {e}")
+            log_msg(f"[Wapiti] Error during execution/parsing: {e}", level="error")
             
         return findings
 
@@ -102,9 +139,12 @@ class NucleiEngine(DASTEngine):
         output_file = "nuclei_output.json"
         
         if os.path.exists(output_file):
-            os.remove(output_file)
+            try:
+                os.remove(output_file)
+            except Exception:
+                pass
             
-        print(f"[Nuclei] Starting scan on {target_url}...")
+        log_msg(f"[Nuclei] Starting scan on {target_url}...")
         
         cmd = [
             "nuclei",
@@ -113,15 +153,21 @@ class NucleiEngine(DASTEngine):
             "-t", "cves/,vulnerabilities/"
         ]
         
+        dast_logger.info(f"[Nuclei] Command: {' '.join(cmd)}")
+        
         try:
             env = os.environ.copy()
-            subprocess.run(cmd, capture_output=True, text=True, env=env)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            dast_logger.info(f"[Nuclei] Return code: {proc.returncode}")
+            if proc.stdout:
+                dast_logger.debug(f"[Nuclei STDOUT]:\n{proc.stdout}")
+            if proc.stderr:
+                dast_logger.info(f"[Nuclei STDERR]:\n{proc.stderr}")
             
             if not os.path.exists(output_file):
-                print("[Nuclei] Warning: No output file generated. Scan may have found nothing, or Nuclei failed.")
+                log_msg(f"[Nuclei] Notice: No findings exported for {target_url}.", level="info")
                 return findings
             
-            # Nuclei exports JSON Lines format (one JSON object per line)
             with open(output_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     if not line.strip():
@@ -137,65 +183,78 @@ class NucleiEngine(DASTEngine):
                             target_url=vuln.get("matched-at", target_url),
                             payload=vuln.get("extracted-results", [""])[0] if vuln.get("extracted-results") else "N/A",
                             http_request=vuln.get("request", "N/A"),
-                            http_response_snippet=str(vuln.get("response", "N/A"))[:500]  # truncate huge responses
+                            http_response_snippet=str(vuln.get("response", "N/A"))[:500]
                         )
                         findings.append(finding)
                     except json.JSONDecodeError:
                         continue
                         
+            dast_logger.info(f"[Nuclei] Successfully parsed {len(findings)} findings.")
+                        
         except FileNotFoundError:
-            print("[Nuclei] Error: nuclei command not found. Please download Nuclei and add it to your PATH.")
+            log_msg("[Nuclei] Error: 'nuclei' command not found in PATH.", level="error")
         except Exception as e:
-            print(f"[Nuclei] Error parsing results: {e}")
+            log_msg(f"[Nuclei] Error parsing results: {e}", level="error")
             
         return findings
 
 class ZAPEngine(DASTEngine):
     def __init__(self, proxy_url="http://127.0.0.1:8081", api_key=""):
-        self.proxy_url = proxy_url
+        self.proxy_url = proxy_url.rstrip('/')
         self.api_key = api_key
         
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
-        print(f"[ZAP] Starting scan on {target_url} via Daemon {self.proxy_url}...")
+        log_msg(f"[ZAP] Connecting to daemon at {self.proxy_url} to attack {target_url}...")
+        dast_logger.info(f"[ZAP] Target: {target_url}, Daemon: {self.proxy_url}")
         
         try:
+            # Check daemon accessibility
+            ver_res = requests.get(f"{self.proxy_url}/JSON/core/view/version/?apikey={self.api_key}", timeout=5)
+            if ver_res.status_code != 200:
+                log_msg(f"[ZAP] Error: Daemon returned status {ver_res.status_code} ({ver_res.text})", level="error")
+                return findings
+            log_msg(f"[ZAP] Daemon online (Version: {ver_res.json().get('version', 'OK')})")
+            
             # 1. Spider
-            print("[ZAP] Running Spider...")
-            res = requests.get(f"{self.proxy_url}/JSON/spider/action/scan/?url={target_url}&apikey={self.api_key}", timeout=5)
+            log_msg("[ZAP] Running Spider crawler...")
+            res = requests.get(f"{self.proxy_url}/JSON/spider/action/scan/?url={target_url}&apikey={self.api_key}", timeout=10)
             if res.status_code != 200:
-                print(f"[ZAP] Error triggering spider: {res.text}")
+                log_msg(f"[ZAP] Error triggering spider: {res.text}", level="error")
                 return findings
             scan_id = res.json().get("scan")
             
             while True:
                 stat = requests.get(f"{self.proxy_url}/JSON/spider/view/status/?scanId={scan_id}&apikey={self.api_key}").json()
                 if stat.get("status") == "100":
+                    log_msg("[ZAP] Spider crawler complete (100%).")
                     break
                 time.sleep(2)
                 
             # 2. Active Scan
-            print("[ZAP] Running Active Scan...")
-            res = requests.get(f"{self.proxy_url}/JSON/ascan/action/scan/?url={target_url}&apikey={self.api_key}")
+            log_msg("[ZAP] Running Active Scan...")
+            res = requests.get(f"{self.proxy_url}/JSON/ascan/action/scan/?url={target_url}&apikey={self.api_key}", timeout=10)
             scan_id = res.json().get("scan")
             
             while True:
                 stat = requests.get(f"{self.proxy_url}/JSON/ascan/view/status/?scanId={scan_id}&apikey={self.api_key}").json()
                 status_int = int(stat.get("status", 0))
                 if status_int >= 100:
+                    log_msg("[ZAP] Active Scan complete (100%).")
                     break
                 print(f"[ZAP] Active Scan progress: {status_int}%")
                 time.sleep(5)
                 
             # 3. Retrieve Alerts
-            print("[ZAP] Retrieving Alerts...")
+            log_msg("[ZAP] Retrieving Alerts...")
             res = requests.get(f"{self.proxy_url}/JSON/core/view/alerts/?baseurl={target_url}&apikey={self.api_key}")
             alerts = res.json().get("alerts", [])
+            dast_logger.info(f"[ZAP] Retrieved {len(alerts)} raw alerts from daemon.")
             
             for vuln in alerts:
                 severity = vuln.get("risk", "Medium")
                 if severity == "Informational":
-                    continue # Skip low level noise
+                    continue
                     
                 finding = DASTCandidateFinding(
                     engine="ZAP",
@@ -208,20 +267,17 @@ class ZAPEngine(DASTEngine):
                 )
                 findings.append(finding)
                 
+            dast_logger.info(f"[ZAP] Filtered to {len(findings)} non-informational findings.")
+                
         except requests.exceptions.ConnectionError:
-            print(f"[ZAP] Error: Could not connect to ZAP Daemon at {self.proxy_url}. Make sure ZAP is running on port 8081.")
+            log_msg(f"[ZAP] Notice: Could not connect to ZAP Daemon at {self.proxy_url}. Make sure ZAP is running with API enabled on port 8081.", level="warning")
         except Exception as e:
-            print(f"[ZAP] Error during ZAP scan: {e}")
+            log_msg(f"[ZAP] Error during ZAP scan: {e}", level="error")
             
         return findings
 
 class DynamicOrchestrator:
     def __init__(self, engines: List[str], zap_url: str = "http://127.0.0.1:8081", zap_api_key: str = ""):
-        """
-        engines: list of engine names e.g. ["wapiti", "nuclei", "zap"]
-        zap_url: URL of the ZAP proxy/daemon
-        zap_api_key: API key for the ZAP daemon
-        """
         self.engines = []
         for eng in engines:
             e = eng.lower().strip()
@@ -232,15 +288,41 @@ class DynamicOrchestrator:
             elif e == "zap":
                 self.engines.append(ZAPEngine(proxy_url=zap_url, api_key=zap_api_key))
             else:
-                print(f"Warning: Unknown DAST engine '{eng}'")
+                log_msg(f"Warning: Unknown DAST engine '{eng}'", level="warning")
                 
     def scan_all(self, target_url: str) -> List[DASTCandidateFinding]:
+        # 1. URL Normalization
+        if not target_url.startswith(("http://", "https://")):
+            target_url = "http://" + target_url
+            log_msg(f"[DAST] Auto-prefixed URL scheme -> {target_url}")
+            
+        log_msg("--------------------------------------------------")
+        log_msg(f"[DAST Orchestrator] Target: {target_url}")
+        log_msg(f"[DAST Orchestrator] Engines: {[e.__class__.__name__ for e in self.engines]}")
+        log_msg(f"[DAST Orchestrator] Detailed logs -> dast_scan.log")
+        log_msg("--------------------------------------------------")
+        
+        # 2. Pre-flight connectivity check
+        try:
+            probe = requests.get(target_url, timeout=10, allow_redirects=True)
+            log_msg(f"[DAST Pre-flight] Target is reachable (HTTP {probe.status_code}).")
+            if probe.history:
+                log_msg(f"[DAST Pre-flight] Redirected to: {probe.url}")
+        except Exception as e:
+            log_msg(f"[DAST Pre-flight WARNING] Unable to reach {target_url}: {e}", level="warning")
+            log_msg(f"[DAST Pre-flight WARNING] Verify that the target server is started and listening.", level="warning")
+
         all_findings = []
         for engine in self.engines:
+            engine_name = engine.__class__.__name__
             try:
                 findings = engine.scan(target_url)
                 all_findings.extend(findings)
+                log_msg(f"[{engine_name}] Result: {len(findings)} vulnerability candidate(s) collected.")
             except Exception as e:
-                print(f"Error running {engine.__class__.__name__}: {e}")
+                log_msg(f"[DAST Orchestrator] Error running {engine_name}: {e}", level="error")
                 
+        log_msg("--------------------------------------------------")
+        log_msg(f"[DAST Orchestrator] Total dynamic findings collected: {len(all_findings)}")
+        log_msg("--------------------------------------------------")
         return all_findings
