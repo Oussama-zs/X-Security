@@ -39,6 +39,7 @@ def main():
     
     parser.add_argument("--model", required=True, help="Model name to use (e.g., anthropic/claude-3-haiku, llama3)")
     parser.add_argument("--api-key", required=True, help="API Key for the provider (use 'none' for local models with no auth)")
+    parser.add_argument("--cookie", default="", help="Session Cookie string for authenticated DAST scanning (e.g. 'JSESSIONID=...; token=...')")
     args = parser.parse_args()
 
     if not args.target_dir and not args.target_url and not args.resume:
@@ -119,7 +120,7 @@ def main():
         if run_dast:
             print(f"\n[Phase 2.5] Dynamic Analysis (DAST) on {args.target_url}...")
             engines_list = [e.strip() for e in args.dast_engines.split(",")]
-            orchestrator = DynamicOrchestrator(engines=engines_list, zap_url=args.zap_url, zap_api_key=args.zap_api_key)
+            orchestrator = DynamicOrchestrator(engines=engines_list, zap_url=args.zap_url, zap_api_key=args.zap_api_key, cookie=args.cookie)
             dast_candidates = orchestrator.scan_all(args.target_url)
             all_candidates.extend(dast_candidates)
 

@@ -57,6 +57,9 @@ class DASTEngine:
         raise NotImplementedError("Each DAST engine must implement scan()")
 
 class WapitiEngine(DASTEngine):
+    def __init__(self, cookie: str = ""):
+        self.cookie = cookie
+
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
         output_file = "wapiti_output.json"
@@ -77,6 +80,9 @@ class WapitiEngine(DASTEngine):
             "-m", "sql,xss,file,crlf,exec,ssrf",
             "--max-scan-time", "120"
         ]
+        if self.cookie:
+            cmd.extend(["--header", f"Cookie: {self.cookie}"])
+            dast_logger.info(f"[Wapiti] Injected session cookie into requests.")
         
         dast_logger.info(f"[Wapiti] Command: {' '.join(cmd)}")
         
@@ -134,6 +140,9 @@ class WapitiEngine(DASTEngine):
         return findings
 
 class NucleiEngine(DASTEngine):
+    def __init__(self, cookie: str = ""):
+        self.cookie = cookie
+
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
         output_file = "nuclei_output.json"
@@ -152,6 +161,9 @@ class NucleiEngine(DASTEngine):
             "-json-export", output_file,
             "-t", "cves/,vulnerabilities/"
         ]
+        if self.cookie:
+            cmd.extend(["-H", f"Cookie: {self.cookie}"])
+            dast_logger.info(f"[Nuclei] Injected session cookie header.")
         
         dast_logger.info(f"[Nuclei] Command: {' '.join(cmd)}")
         
@@ -199,9 +211,10 @@ class NucleiEngine(DASTEngine):
         return findings
 
 class ZAPEngine(DASTEngine):
-    def __init__(self, proxy_url="http://127.0.0.1:8081", api_key=""):
+    def __init__(self, proxy_url="http://127.0.0.1:8081", api_key="", cookie: str = ""):
         self.proxy_url = proxy_url.rstrip('/')
         self.api_key = api_key
+        self.cookie = cookie
         
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
@@ -215,6 +228,17 @@ class ZAPEngine(DASTEngine):
                 log_msg(f"[ZAP] Error: Daemon returned status {ver_res.status_code} ({ver_res.text})", level="error")
                 return findings
             log_msg(f"[ZAP] Daemon online (Version: {ver_res.json().get('version', 'OK')})")
+            
+            # Configure Session Cookie if provided
+            if self.cookie:
+                try:
+                    requests.get(
+                        f"{self.proxy_url}/JSON/replacer/action/addRule/?description=AuthCookie&enabled=true&matchTypeCode=4&matchString=Cookie&replacement={self.cookie}&apikey={self.api_key}",
+                        timeout=5
+                    )
+                    log_msg(f"[ZAP] Authenticated session cookie configured for scan.")
+                except Exception as e:
+                    dast_logger.warning(f"[ZAP] Could not set replacer cookie rule: {e}")
             
             # 1. Spider
             log_msg("[ZAP] Running Spider crawler...")
@@ -277,16 +301,17 @@ class ZAPEngine(DASTEngine):
         return findings
 
 class DynamicOrchestrator:
-    def __init__(self, engines: List[str], zap_url: str = "http://127.0.0.1:8081", zap_api_key: str = ""):
+    def __init__(self, engines: List[str], zap_url: str = "http://127.0.0.1:8081", zap_api_key: str = "", cookie: str = ""):
+        self.cookie = cookie
         self.engines = []
         for eng in engines:
             e = eng.lower().strip()
             if e == "wapiti":
-                self.engines.append(WapitiEngine())
+                self.engines.append(WapitiEngine(cookie=cookie))
             elif e == "nuclei":
-                self.engines.append(NucleiEngine())
+                self.engines.append(NucleiEngine(cookie=cookie))
             elif e == "zap":
-                self.engines.append(ZAPEngine(proxy_url=zap_url, api_key=zap_api_key))
+                self.engines.append(ZAPEngine(proxy_url=zap_url, api_key=zap_api_key, cookie=cookie))
             else:
                 log_msg(f"Warning: Unknown DAST engine '{eng}'", level="warning")
                 
@@ -299,13 +324,18 @@ class DynamicOrchestrator:
         log_msg("--------------------------------------------------")
         log_msg(f"[DAST Orchestrator] Target: {target_url}")
         log_msg(f"[DAST Orchestrator] Engines: {[e.__class__.__name__ for e in self.engines]}")
+        if self.cookie:
+            log_msg(f"[DAST Orchestrator] Authentication: Active (Cookie: {self.cookie[:20]}...)")
         log_msg(f"[DAST Orchestrator] Detailed logs -> dast_scan.log")
         log_msg("--------------------------------------------------")
         
-        # 2. Pre-flight connectivity check
+        # 2. Pre-flight connectivity check with session Cookie
+        headers = {"Cookie": self.cookie} if self.cookie else {}
         try:
-            probe = requests.get(target_url, timeout=10, allow_redirects=True)
+            probe = requests.get(target_url, headers=headers, timeout=10, allow_redirects=True)
             log_msg(f"[DAST Pre-flight] Target is reachable (HTTP {probe.status_code}).")
+            if self.cookie:
+                log_msg(f"[DAST Pre-flight] Authenticated session active! Probed successfully with Cookie.")
             if probe.history:
                 log_msg(f"[DAST Pre-flight] Redirected to: {probe.url}")
         except Exception as e:
