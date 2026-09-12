@@ -215,6 +215,7 @@ class ZAPEngine(DASTEngine):
         self.proxy_url = proxy_url.rstrip('/')
         self.api_key = api_key
         self.cookie = cookie
+        self.headers = {"X-ZAP-API-Key": self.api_key} if self.api_key else {}
         
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
@@ -223,8 +224,11 @@ class ZAPEngine(DASTEngine):
         
         try:
             # Check daemon accessibility
-            ver_res = requests.get(f"{self.proxy_url}/JSON/core/view/version/?apikey={self.api_key}", timeout=5)
-            if ver_res.status_code != 200:
+            ver_res = requests.get(f"{self.proxy_url}/JSON/core/view/version/?apikey={self.api_key}", headers=self.headers, timeout=5)
+            if ver_res.status_code == 403:
+                log_msg(f"[ZAP] Auth Error (403 Forbidden): ZAP exige une clé API. Lancez ZAP avec: zaproxy -daemon -port 8081 -config api.disablekey=true OU fournissez l'argument --zap-api-key <VOTRE_CLE>", level="error")
+                return findings
+            elif ver_res.status_code != 200:
                 log_msg(f"[ZAP] Error: Daemon returned status {ver_res.status_code} ({ver_res.text})", level="error")
                 return findings
             log_msg(f"[ZAP] Daemon online (Version: {ver_res.json().get('version', 'OK')})")
@@ -234,6 +238,7 @@ class ZAPEngine(DASTEngine):
                 try:
                     requests.get(
                         f"{self.proxy_url}/JSON/replacer/action/addRule/?description=AuthCookie&enabled=true&matchTypeCode=4&matchString=Cookie&replacement={self.cookie}&apikey={self.api_key}",
+                        headers=self.headers,
                         timeout=5
                     )
                     log_msg(f"[ZAP] Authenticated session cookie configured for scan.")
@@ -242,14 +247,14 @@ class ZAPEngine(DASTEngine):
             
             # 1. Spider
             log_msg("[ZAP] Running Spider crawler...")
-            res = requests.get(f"{self.proxy_url}/JSON/spider/action/scan/?url={target_url}&apikey={self.api_key}", timeout=10)
+            res = requests.get(f"{self.proxy_url}/JSON/spider/action/scan/?url={target_url}&apikey={self.api_key}", headers=self.headers, timeout=10)
             if res.status_code != 200:
                 log_msg(f"[ZAP] Error triggering spider: {res.text}", level="error")
                 return findings
             scan_id = res.json().get("scan")
             
             while True:
-                stat = requests.get(f"{self.proxy_url}/JSON/spider/view/status/?scanId={scan_id}&apikey={self.api_key}").json()
+                stat = requests.get(f"{self.proxy_url}/JSON/spider/view/status/?scanId={scan_id}&apikey={self.api_key}", headers=self.headers).json()
                 if stat.get("status") == "100":
                     log_msg("[ZAP] Spider crawler complete (100%).")
                     break
@@ -257,11 +262,11 @@ class ZAPEngine(DASTEngine):
                 
             # 2. Active Scan
             log_msg("[ZAP] Running Active Scan...")
-            res = requests.get(f"{self.proxy_url}/JSON/ascan/action/scan/?url={target_url}&apikey={self.api_key}", timeout=10)
+            res = requests.get(f"{self.proxy_url}/JSON/ascan/action/scan/?url={target_url}&apikey={self.api_key}", headers=self.headers, timeout=10)
             scan_id = res.json().get("scan")
             
             while True:
-                stat = requests.get(f"{self.proxy_url}/JSON/ascan/view/status/?scanId={scan_id}&apikey={self.api_key}").json()
+                stat = requests.get(f"{self.proxy_url}/JSON/ascan/view/status/?scanId={scan_id}&apikey={self.api_key}", headers=self.headers).json()
                 status_int = int(stat.get("status", 0))
                 if status_int >= 100:
                     log_msg("[ZAP] Active Scan complete (100%).")
@@ -271,7 +276,7 @@ class ZAPEngine(DASTEngine):
                 
             # 3. Retrieve Alerts
             log_msg("[ZAP] Retrieving Alerts...")
-            res = requests.get(f"{self.proxy_url}/JSON/core/view/alerts/?baseurl={target_url}&apikey={self.api_key}")
+            res = requests.get(f"{self.proxy_url}/JSON/core/view/alerts/?baseurl={target_url}&apikey={self.api_key}", headers=self.headers)
             alerts = res.json().get("alerts", [])
             dast_logger.info(f"[ZAP] Retrieved {len(alerts)} raw alerts from daemon.")
             
