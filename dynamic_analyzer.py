@@ -14,33 +14,15 @@ import json
 import subprocess
 import os
 import time
-import logging
 import requests
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
 
-# Dedicated DAST logger configured to write detailed logs to dast_scan.log
-dast_logger = logging.getLogger("xsecurity.dast")
-dast_logger.setLevel(logging.DEBUG)
-
-# File handler for dast_scan.log
-if not dast_logger.handlers:
-    fh = logging.FileHandler("dast_scan.log", mode="w", encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    fh.setFormatter(formatter)
-    dast_logger.addHandler(fh)
 
 def log_msg(msg: str, level: str = "info"):
-    """Prints message to stdout and logs to dast_scan.log."""
+    """Prints message to stdout."""
     print(msg)
-    if level == "error":
-        dast_logger.error(msg)
-    elif level == "warning":
-        dast_logger.warning(msg)
-    else:
-        dast_logger.info(msg)
 
 @dataclass
 class DASTCandidateFinding:
@@ -82,25 +64,25 @@ class WapitiEngine(DASTEngine):
         ]
         if self.cookie:
             cmd.extend(["--header", f"Cookie: {self.cookie}"])
-            dast_logger.info(f"[Wapiti] Injected session cookie into requests.")
+            print(f"[Wapiti] Injected session cookie into requests.")
         
-        dast_logger.info(f"[Wapiti] Command: {' '.join(cmd)}")
+        print(f"[Wapiti] Command: {' '.join(cmd)}")
         
         try:
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
             
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
-            dast_logger.info(f"[Wapiti] Return code: {proc.returncode}")
+            print(f"[Wapiti] Return code: {proc.returncode}")
             if proc.stdout:
-                dast_logger.debug(f"[Wapiti STDOUT]:\n{proc.stdout}")
+                print(f"[Wapiti STDOUT]:\n{proc.stdout}")
             if proc.stderr:
-                dast_logger.info(f"[Wapiti STDERR]:\n{proc.stderr}")
+                print(f"[Wapiti STDERR]:\n{proc.stderr}")
             
             if not os.path.exists(output_file):
                 log_msg(f"[Wapiti] Notice: No output JSON generated (Code {proc.returncode}). Check 'dast_scan.log' for details.", level="warning")
                 if proc.stderr:
-                    dast_logger.error(f"[Wapiti Stderr Details]: {proc.stderr}")
+                    print(f"[Wapiti Stderr Details]: {proc.stderr}")
                 return findings
                 
             with open(output_file, 'r', encoding='utf-8') as f:
@@ -130,7 +112,7 @@ class WapitiEngine(DASTEngine):
                     )
                     findings.append(finding)
                     
-            dast_logger.info(f"[Wapiti] Successfully parsed {len(findings)} findings.")
+            print(f"[Wapiti] Successfully parsed {len(findings)} findings.")
                     
         except FileNotFoundError:
             log_msg("[Wapiti] Error: 'wapiti' command not found. Is it installed in PATH?", level="error")
@@ -163,18 +145,18 @@ class NucleiEngine(DASTEngine):
         ]
         if self.cookie:
             cmd.extend(["-H", f"Cookie: {self.cookie}"])
-            dast_logger.info(f"[Nuclei] Injected session cookie header.")
+            print(f"[Nuclei] Injected session cookie header.")
         
-        dast_logger.info(f"[Nuclei] Command: {' '.join(cmd)}")
+        print(f"[Nuclei] Command: {' '.join(cmd)}")
         
         try:
             env = os.environ.copy()
             proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
-            dast_logger.info(f"[Nuclei] Return code: {proc.returncode}")
+            print(f"[Nuclei] Return code: {proc.returncode}")
             if proc.stdout:
-                dast_logger.debug(f"[Nuclei STDOUT]:\n{proc.stdout}")
+                print(f"[Nuclei STDOUT]:\n{proc.stdout}")
             if proc.stderr:
-                dast_logger.info(f"[Nuclei STDERR]:\n{proc.stderr}")
+                print(f"[Nuclei STDERR]:\n{proc.stderr}")
             
             if not os.path.exists(output_file):
                 log_msg(f"[Nuclei] Notice: No findings exported for {target_url}.", level="info")
@@ -201,7 +183,7 @@ class NucleiEngine(DASTEngine):
                     except json.JSONDecodeError:
                         continue
                         
-            dast_logger.info(f"[Nuclei] Successfully parsed {len(findings)} findings.")
+            print(f"[Nuclei] Successfully parsed {len(findings)} findings.")
                         
         except FileNotFoundError:
             log_msg("[Nuclei] Error: 'nuclei' command not found in PATH.", level="error")
@@ -220,7 +202,7 @@ class ZAPEngine(DASTEngine):
     def scan(self, target_url: str) -> List[DASTCandidateFinding]:
         findings = []
         log_msg(f"[ZAP] Connecting to daemon at {self.proxy_url} to attack {target_url}...")
-        dast_logger.info(f"[ZAP] Target: {target_url}, Daemon: {self.proxy_url}")
+        print(f"[ZAP] Target: {target_url}, Daemon: {self.proxy_url}")
         
         try:
             # Check daemon accessibility
@@ -243,7 +225,7 @@ class ZAPEngine(DASTEngine):
                     )
                     log_msg(f"[ZAP] Authenticated session cookie configured for scan.")
                 except Exception as e:
-                    dast_logger.warning(f"[ZAP] Could not set replacer cookie rule: {e}")
+                    print(f"[ZAP] Could not set replacer cookie rule: {e}")
             
             # 1. Spider
             log_msg("[ZAP] Running Spider crawler...")
@@ -278,7 +260,7 @@ class ZAPEngine(DASTEngine):
             log_msg("[ZAP] Retrieving Alerts...")
             res = requests.get(f"{self.proxy_url}/JSON/core/view/alerts/?baseurl={target_url}&apikey={self.api_key}", headers=self.headers)
             alerts = res.json().get("alerts", [])
-            dast_logger.info(f"[ZAP] Retrieved {len(alerts)} raw alerts from daemon.")
+            print(f"[ZAP] Retrieved {len(alerts)} raw alerts from daemon.")
             
             for vuln in alerts:
                 severity = vuln.get("risk", "Medium")
@@ -296,7 +278,7 @@ class ZAPEngine(DASTEngine):
                 )
                 findings.append(finding)
                 
-            dast_logger.info(f"[ZAP] Filtered to {len(findings)} non-informational findings.")
+            print(f"[ZAP] Filtered to {len(findings)} non-informational findings.")
                 
         except requests.exceptions.ConnectionError:
             log_msg(f"[ZAP] Notice: Could not connect to ZAP Daemon at {self.proxy_url}. Make sure ZAP is running with API enabled on port 8081.", level="warning")
